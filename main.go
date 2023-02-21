@@ -2,16 +2,17 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/bmizerany/pq"
+	"github.com/jackc/pgx"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"pizzasushiwokServer/config"
+	"strconv"
 	"sync"
+	"time"
 )
 
 type NeoCount struct {
@@ -30,29 +31,36 @@ type NeoCountResponse struct {
 func main() {
 	ctx := context.Background()
 	cfg := config.GetInstance()
-	print(fmt.Sprintf("postgres://%s:%s@%s/neo_count?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost))
-	db, err := sql.Open("postgres", fmt.Sprintf("postgres://%s:%s@%s/neo_count?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost))
+
+	conn, err := pgx.Connect(pgx.ConnConfig{
+		Host:     cfg.DbHost,
+		Port:     stringToUint16(cfg.DbPort),
+		Database: cfg.DbName,
+		User:     cfg.DbUser,
+		Password: cfg.DbPassword,
+	})
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
-	http.HandleFunc("/neo/count", neoCountHandler(ctx, db))
+	defer conn.Close()
+	http.HandleFunc("/neo/count", neoCountHandler(ctx, conn))
 	http.ListenAndServe(":8080", nil)
 }
 
-func neoCountHandler(ctx context.Context, db *sql.DB) http.HandlerFunc {
+func neoCountHandler(ctx context.Context, conn *pgx.Conn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			neoCountGETHandler(ctx, w, r)
 		} else if r.Method == "POST" {
-			neoCountPOSTHandler(ctx, db, w, r)
+			neoCountPOSTHandler(ctx, conn, w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func neoCountPOSTHandler(ctx context.Context, db *sql.DB, w http.ResponseWriter, r *http.Request) {
+func neoCountPOSTHandler(ctx context.Context, conn *pgx.Conn, w http.ResponseWriter, r *http.Request) {
 	var neoCounts NeoCountRequest
 	err := json.NewDecoder(r.Body).Decode(&neoCounts)
 	if err != nil {
@@ -60,7 +68,11 @@ func neoCountPOSTHandler(ctx context.Context, db *sql.DB, w http.ResponseWriter,
 		return
 	}
 	for _, nc := range neoCounts.NeoCount {
-		_, err = db.Exec(`INSERT INTO neo_count (date, count) VALUES ($1, $2) ON CONFLICT (date) DO UPDATE SET count = $2`, nc.Date, nc.Count)
+		date, err := time.Parse("2006-01-02", nc.Date)
+		if err != nil {
+			log.Fatal(err)
+		}
+		_, err = conn.Exec("INSERT INTO neo_counts (date, neo) VALUES ($1, $2) ON CONFLICT (date) DO UPDATE SET neo = $2", date, nc.Count)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -136,4 +148,13 @@ func neoCountGETHandler(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"total_count": %d}`, totalCount)
+}
+
+func stringToUint16(s string) uint16 {
+	i, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		log.Print("error: stringToUint16")
+		return 0
+	}
+	return uint16(i)
 }

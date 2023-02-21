@@ -7,7 +7,7 @@ import (
 )
 
 type Configuration struct {
-	DbHost     string `envconfig:"DB_HOST" default:"local"`
+	DbHost     string `envconfig:"DB_HOST" default:"localhost"`
 	DbPort     string `envconfig:"DB_PORT" default:"5432"`
 	DbName     string `envconfig:"DB_NAME" default:"asteroids"`
 	DbTable    string `envconfig:"DB_NAME" default:"neo_count"`
@@ -24,17 +24,12 @@ func GetInstance() *Configuration {
 		lock.Lock()
 		defer lock.Unlock()
 		if singleInstance == nil {
-			fmt.Println("Creating single instance now.")
 			singleInstance = new(Configuration)
 			if err := envconfig.Process("", singleInstance); err != nil {
 				fmt.Println("failed to load envconfig")
 			}
 			return singleInstance
-		} else {
-			fmt.Println("Single instance already created.")
 		}
-	} else {
-		fmt.Println("Single instance already created.")
 	}
 	return singleInstance
 }

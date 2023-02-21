@@ -9,9 +9,12 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"pizzasushiwokServer/config"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -29,9 +32,11 @@ type NeoCountResponse struct {
 }
 
 func main() {
-	ctx := context.Background()
+	gracefulShutDown := make(chan os.Signal, 1)
+	signal.Notify(gracefulShutDown, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	cfg := config.GetInstance()
-
 	conn, err := pgx.Connect(pgx.ConnConfig{
 		Host:     cfg.DbHost,
 		Port:     stringToUint16(cfg.DbPort),
@@ -39,20 +44,20 @@ func main() {
 		User:     cfg.DbUser,
 		Password: cfg.DbPassword,
 	})
-
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
 	http.HandleFunc("/neo/count", neoCountHandler(ctx, conn))
-	http.ListenAndServe(":8080", nil)
+	go http.ListenAndServe(":8080", nil)
+	<-gracefulShutDown
 }
 
 func neoCountHandler(ctx context.Context, conn *pgx.Conn) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
+		if r.Method == http.MethodGet {
 			neoCountGETHandler(ctx, w, r)
-		} else if r.Method == "POST" {
+		} else if r.Method == http.MethodPost {
 			neoCountPOSTHandler(ctx, conn, w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -113,10 +118,15 @@ func neoCountGETHandler(ctx context.Context, w http.ResponseWriter, r *http.Requ
 			q.Set("detailed", "true")
 			q.Set("api_key", apiKey)
 			u.RawQuery = q.Encode()
-
-			resp, err := http.Get(u.String())
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 			if err != nil {
 				log.Printf("Error making request: %v", err)
+				return
+			}
+			cl := http.Client{}
+			resp, err := cl.Do(req)
+			if err != nil {
+				log.Printf("Error sending request: %v", err)
 				return
 			}
 			defer resp.Body.Close()

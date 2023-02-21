@@ -1,4 +1,6 @@
 # pizzasushiwokServer
 Для работы нужно установить пакеты:
-github.com/bmizerany/pq
+
+github.com/jackc/pgx
+
 github.com/kelseyhightower/envconfig
